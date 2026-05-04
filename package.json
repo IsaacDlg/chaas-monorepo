@@ -1,0 +1,22 @@
+{
+  "name": "chaas-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CHaaS Dev Orchestrator — Levanta todo el stack con un solo comando",
+  "scripts": {
+    "predev": "node scripts/preflight.mjs",
+    "dev": "concurrently --kill-others-on-fail --prefix-colors \"bgBlue.bold,bgGreen.bold,bgMagenta.bold\" --names \"DOCKER,BACKEND,FRONTEND\" \"npm run dev:docker\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:docker": "docker compose -f chaas-backend/docker-compose.yml up postgres redis n8n n8n-worker",
+    "dev:backend": "node scripts/start-backend.mjs",
+    "dev:frontend": "npm run dev --prefix chaas-frontend",
+    "dev:stripe": "stripe listen --forward-to http://localhost:3001/api/stripe/webhook",
+    "dev:full": "concurrently --kill-others-on-fail --prefix-colors \"bgBlue.bold,bgGreen.bold,bgMagenta.bold,bgYellow.bold\" --names \"DOCKER,BACKEND,FRONTEND,STRIPE\" \"npm run dev:docker\" \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:stripe\"",
+    "stop": "docker compose -f chaas-backend/docker-compose.yml down",
+    "db:studio": "npx --prefix chaas-backend prisma studio",
+    "db:migrate": "npx prisma migrate dev --schema chaas-backend/prisma/schema.prisma",
+    "install:all": "npm install --prefix chaas-backend && npm install --prefix chaas-frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
