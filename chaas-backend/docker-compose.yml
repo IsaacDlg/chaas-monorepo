@@ -1,0 +1,73 @@
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: chaas-db
+    restart: always
+    environment:
+      POSTGRES_USER: chaas_user
+      POSTGRES_PASSWORD: chaas_password
+      POSTGRES_DB: chaas_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: chaas-redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: chaas-n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/Bogota
+      # PARCHE SCALE-01: Queue Mode — delega ejecuciones a workers vía Redis
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=1
+      - QUEUE_HEALTH_CHECK_ACTIVE=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - postgres
+      - redis
+
+  # Worker independiente: escala con `docker-compose up --scale n8n-worker=3`
+  n8n-worker:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: chaas-n8n-worker
+    restart: always
+    command: worker
+    environment:
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=1
+      - GENERIC_TIMEZONE=America/Bogota
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - n8n
+      - redis
+
+volumes:
+  postgres_data:
+  n8n_data:
+  redis_data:
+
