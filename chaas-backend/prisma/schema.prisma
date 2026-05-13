@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// 1. TENANT (Empresa)
+// -----------------------------------------------------------------------------
+model Tenant {
+  id   String @id @default(uuid())
+  name String
+
+  // Credenciales WhatsApp Cloud API (Cada empresa tiene el suyo)
+  wa_token               String?
+  wa_phone_number_id     String?
+  wa_business_account_id String?
+
+  // Prompt del sistema para la IA (El alma del chatbot de esta empresa)
+  system_prompt String? @db.Text
+
+  // [Monetización Stripe]
+  stripe_customer_id     String?   @unique
+  stripe_subscription_id String?   @unique
+  stripe_price_id        String?   // price_xxx — ID del plan activo en Stripe
+  subscription_status    SubStatus @default(INACTIVE)
+  plan_type              PlanType  @default(FREE)
+  current_period_end     DateTime?
+
+  // Analíticas y Control
+  is_active Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones (El núcleo del multi-tenant)
+  users    User[]
+  contacts Contact[]
+  tags     Tag[]
+}
+
+enum SubStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INACTIVE
+}
+
+enum PlanType {
+  FREE
+  BASIC
+  PRO
+}
+
+// -----------------------------------------------------------------------------
+// 2. USER (Agentes y Dueños)
+// -----------------------------------------------------------------------------
+model User {
+  id           String @id @default(uuid())
+  email        String @unique
+  passwordHash String
+  name         String
+  role         Role   @default(AGENT)
+
+  // [Aislamiento] Todo usuario está atado de forma inquebrantable a un Tenant
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId]) // Indexación para logins rápidos
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+// -----------------------------------------------------------------------------
+// 3. CONTACT (Números de WhatsApp / Clientes finales)
+// -----------------------------------------------------------------------------
+model Contact {
+  id          String  @id @default(uuid())
+  wa_id       String // Ej: "5215555555555" (Número único en WhatsApp)
+  name        String?
+  profile_pic String?
+
+  // Lógica Zenvia/Trengo (Handoff - Asignación de Agentes)
+  is_bot_active     Boolean @default(true) // Si es false, n8n ignora los mensajes
+  assigned_agent_id String? // UUID del User (Agente) que está atendiendo este chat
+
+  // [Auditoría] Ventana de 24 horas de WhatsApp (Meta Session Window)
+  last_inbound_at   DateTime? // Se actualiza con cada mensaje INBOUND del contacto
+
+  // [Aislamiento] El contacto le pertenece exclusivamente a un Tenant
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relaciones
+  messages Message[]
+  tags     TagsOnContacts[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // REGLA DE ORO: Un número de teléfono es único POR EMPRESA, no globalmente.
+  // Esto permite que el cliente le hable a la Empresa A y a la Empresa B de forma aislada.
+  @@unique([tenantId, wa_id])
+  @@index([tenantId])
+}
+
+// -----------------------------------------------------------------------------
+// 4. MESSAGE (Historial de Chats)
+// -----------------------------------------------------------------------------
+model Message {
+  id            String        @id @default(uuid())
+  wa_message_id String?       @unique // ID de mensaje proporcionado por Meta para acks
+  body          String        @db.Text
+  type          MessageType   @default(TEXT)
+  direction     Direction // INBOUND (Llegó a Node) o OUTBOUND (Se envió desde Node)
+  status        MessageStatus @default(SENT)
+
+  // Relación con el Contacto (Hereda indirectamente el aislamiento)
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  // Indexado vital para cargar historiales de chat rápidamente en el FrontEnd
+  @@index([contactId, createdAt(sort: Desc)])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  DOCUMENT
+  INTERACTIVE
+  TEMPLATE
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// -----------------------------------------------------------------------------
+// 5. TAG (Etiquetas Dinámicas para CRM)
+// -----------------------------------------------------------------------------
+model Tag {
+  id    String  @id @default(uuid())
+  name  String // Ej: "VIP", "Cliente Frecuente", "Interesado_Auto"
+  color String?
+
+  // [Aislamiento] Las etiquetas de un Tenant no se cruzan con las de otro
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relación Muchos a Muchos
+  contacts TagsOnContacts[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // No pueden haber dos etiquetas con el mismo nombre en la misma empresa
+  @@unique([tenantId, name])
+}
+
+// Tabla Pivote (Many-to-Many explícito) para optimización y metadatos
+model TagsOnContacts {
+  contactId  String
+  tagId      String
+  assignedAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@index([contactId])
+  @@index([tagId])
+}
