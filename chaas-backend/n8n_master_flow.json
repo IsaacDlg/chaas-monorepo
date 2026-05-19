@@ -1,0 +1,185 @@
+{
+  "name": "Master Flow CHaaS",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "e44c2cc4-c6a9-4674-a4f6-7b2c5c0a373b",
+      "name": "Webhook Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [ 250, 300 ],
+      "webhookId": "master-webhook-chaas"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:3000/api/internal/tenant/{{$json.body.tenantId}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "28b7e2cc-b747-4cf0-a681-4f1b212f0b93",
+      "name": "Get Tenant Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [ 450, 300 ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-3.5-turbo-1106",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "={{ $node[\"Get Tenant Config\"].json.system_prompt }}",
+              "role": "system"
+            },
+            {
+              "message": "={{ $node[\"Webhook Inbound\"].json.body.message }}\n\nTags del usuario: {{ $node[\"Webhook Inbound\"].json.body.tags }}"
+            }
+          ]
+        },
+        "responseFormat": "json_object",
+        "options": {}
+      },
+      "id": "893dfbd9-612b-426c-8ab5-36be0b5e20eb",
+      "name": "OpenAI Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [ 650, 300 ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ JSON.parse($json.message.content).intent }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "ventas"
+            },
+            {
+              "value2": "soporte"
+            },
+            {
+              "value2": "handoff"
+            }
+          ]
+        }
+      },
+      "id": "e02f90a9-4679-4a0b-8d6b-dfed356d252d",
+      "name": "Intent Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [ 850, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/api/internal/send-message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tenantId",
+              "value": "={{ $node[\"Webhook Inbound\"].json.body.tenantId }}"
+            },
+            {
+              "name": "wa_id",
+              "value": "={{ $node[\"Webhook Inbound\"].json.body.wa_id }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ JSON.parse($node[\"OpenAI Agent\"].json.message.content).reply }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c76ec1f7-e2c7-43f6-bd0e-7d6360c704e9",
+      "name": "Send Reply to Node",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [ 1050, 300 ]
+    }
+  ],
+  "connections": {
+    "Webhook Inbound": {
+      "main": [
+        [
+          {
+            "node": "Get Tenant Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Tenant Config": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Agent": {
+      "main": [
+        [
+          {
+            "node": "Intent Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Switch": {
+      "main": [
+        [
+          {
+            "node": "Send Reply to Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply to Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply to Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply to Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
